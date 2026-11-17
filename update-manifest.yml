@@ -1,1 +1,86 @@
+name: Auto Update Portfolio Manifest
 
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'portfolio/**'
+      - '!portfolio/manifest.json'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-manifest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Generate portfolio/manifest.json
+        run: |
+          node -e '
+          const fs = require("fs");
+          const path = require("path");
+
+          const baseDir = "portfolio";
+          const targetFolders = ["print", "pdf-forms", "graphics", "data-merge"];
+          const allowedExt = new Set([".jpg", ".jpeg", ".png", ".webp", ".gif", ".pdf"]);
+
+          if (!fs.existsSync(baseDir)) {
+            fs.mkdirSync(baseDir, { recursive: true });
+          }
+
+          function formatTitle(filename) {
+            const nameWithoutExt = path.parse(filename).name;
+            return nameWithoutExt
+              .replace(/[-_]+/g, " ")
+              .replace(/\s+/g, " ")
+              .trim()
+              .replace(/\b\w/g, char => char.toUpperCase());
+          }
+
+          const items = [];
+
+          for (const folder of targetFolders) {
+            const folderPath = path.join(baseDir, folder);
+            if (!fs.existsSync(folderPath)) continue;
+
+            const files = fs.readdirSync(folderPath).sort((a, b) =>
+              a.localeCompare(b, undefined, { numeric: true })
+            );
+
+            for (const file of files) {
+              const fullPath = path.join(folderPath, file);
+              if (!fs.statSync(fullPath).isFile()) continue;
+
+              const ext = path.extname(file).toLowerCase();
+              if (!allowedExt.has(ext)) continue;
+
+              items.push({
+                folder: folder,
+                file: file,
+                title: formatTitle(file),
+                desc: ""
+              });
+            }
+          }
+
+          const manifestPath = path.join(baseDir, "manifest.json");
+          fs.writeFileSync(manifestPath, JSON.stringify({ items }, null, 2) + "\n");
+          console.log(`Generated manifest.json with ${items.length} items.`);
+          '
+
+      - name: Commit and push manifest.json
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add portfolio/manifest.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Auto-update portfolio manifest.json"
+            git push
+          else
+            echo "No changes in manifest.json"
+          fi
